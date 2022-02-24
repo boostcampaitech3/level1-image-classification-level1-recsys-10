@@ -17,7 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import MaskBaseDataset
 from loss import create_criterion
-from model import initialize_model
+# from model import initialize_model
 
 
 def seed_everything(seed):
@@ -80,7 +80,7 @@ def increment_path(path, exist_ok=False):
         dirs = glob.glob(f"{path}*")
         matches = [re.search(rf"%s(\d+)" % path.stem, d) for d in dirs]
         i = [int(m.groups()[0]) for m in matches if m]
-        n = max(i) + 1 if i else 2
+        n = max(i) + 1 if i else 0
         return f"{path}{n}"
 
 
@@ -94,7 +94,7 @@ def train(data_dir, model_dir, args):
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # -- dataset
-    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: BaseAugmentation
+    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: MaskBaseDataset
     dataset = dataset_module(
         data_dir=data_dir,
     )
@@ -131,14 +131,13 @@ def train(data_dir, model_dir, args):
     )
 
     # -- model
-    if not args.pytorch_pretrained_model:
-        model_module = getattr(import_module("model"), args.model)  # default: BaseModel
-        model = model_module(
-            num_classes=num_classes
-        ).to(device)
-    else:
-        model, _ = initialize_model(args.model, num_classes, feature_extract=args.freeze_layer, use_pretrained=True)
-        model.to(device)
+    model_module = getattr(import_module("model"), args.model)  # default: BaseModel
+    model = model_module(
+        num_classes=num_classes,
+        feature_extract=args.feature_extract,
+        use_pretrained=args.pretrained
+    ).to(device)
+
 
     model = torch.nn.DataParallel(model)
 
@@ -148,7 +147,7 @@ def train(data_dir, model_dir, args):
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
-        weight_decay=5e-4
+        weight_decay=args.weight_decay
     )
     scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
 
@@ -255,7 +254,9 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=1, help='number of epochs to train (default: 1)')
     parser.add_argument('--dataset', type=str, default='MaskBaseDataset', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
-    parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
+    parser.add_argument('--dataset_mean', type=tuple, default=(0.485, 0.456, 0.406), help='default: imagenet data. mask dataset data: (0.548, 0.504, 0.479)')
+    parser.add_argument('--dataset_std', type=tuple, default=(0.229, 0.224, 0.225), help='default: imagenet data. mask dataset data: (0.237, 0.247, 0.246)')
+    parser.add_argument("--resize", nargs="+", type=list, default=[224, 224], help='resize size for image when training')
     parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=1000, help='input batch size for validing (default: 1000)')
     parser.add_argument('--model', type=str, default='BaseModel', help='model type (default: BaseModel)')
@@ -264,11 +265,11 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=0, help='weight decay (defalut: 0)')
     parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
     parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
-    parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
+    parser.add_argument('--lr_decay_step', type=int, default=1000, help='learning rate scheduler deacy step (default: 1000)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
-    parser.add_argument('--pytorch_pretrained_model', type=str, default=None, help='use torchvision pretrained model')
-    parser.add_argument('--freeze_layer', type=bool, default=True, help='freeze parameters of pretrained model except fc layer')
+    parser.add_argument('--pretrained', type=bool, default=True, help='use torchvision pretrained model')
+    parser.add_argument('--feature_extract', type=bool, default=True, help='freeze parameters of pretrained model except fc layer')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
