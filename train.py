@@ -17,6 +17,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from dataset import MaskBaseDataset
 from loss import create_criterion
+from model import initialize_model
 
 
 def seed_everything(seed):
@@ -130,10 +131,15 @@ def train(data_dir, model_dir, args):
     )
 
     # -- model
-    model_module = getattr(import_module("model"), args.model)  # default: BaseModel
-    model = model_module(
-        num_classes=num_classes
-    ).to(device)
+    if not args.pytorch_pretrained_model:
+        model_module = getattr(import_module("model"), args.model)  # default: BaseModel
+        model = model_module(
+            num_classes=num_classes
+        ).to(device)
+    else:
+        model, _ = initialize_model(args.model, num_classes, feature_extract=args.freeze_layer, use_pretrained=True)
+        model.to(device)
+
     model = torch.nn.DataParallel(model)
 
     # -- loss & metric
@@ -236,6 +242,8 @@ def train(data_dir, model_dir, args):
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
+
     parser = argparse.ArgumentParser()
 
     from dotenv import load_dotenv
@@ -259,6 +267,8 @@ if __name__ == '__main__':
     parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
+    parser.add_argument('--pytorch_pretrained_model', type=str, default=None, help='use torchvision pretrained model')
+    parser.add_argument('--freeze_layer', type=bool, default=True, help='freeze parameters of pretrained model except fc layer')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
