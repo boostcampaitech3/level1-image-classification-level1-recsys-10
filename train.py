@@ -19,7 +19,6 @@ from sklearn.metrics import f1_score
 
 from dataset import MaskBaseDataset
 from loss import create_criterion
-# from model import initialize_model
 
 
 def seed_everything(seed):
@@ -263,8 +262,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=1, help='number of epochs to train (default: 1)')
     parser.add_argument('--dataset', type=str, default='MaskBaseDataset', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
-    parser.add_argument('--dataset_mean', type=tuple, default=(0.485, 0.456, 0.406), help='default: imagenet data. mask dataset data: (0.548, 0.504, 0.479)')
-    parser.add_argument('--dataset_std', type=tuple, default=(0.229, 0.224, 0.225), help='default: imagenet data. mask dataset data: (0.237, 0.247, 0.246)')
+    parser.add_argument('--dataset_mean', type=tuple, default=(0.485, 0.456, 0.406), help='default: imagenet data: (0.485, 0.456, 0.406). mask dataset data: (0.548, 0.504, 0.479)')
+    parser.add_argument('--dataset_std', type=tuple, default=(0.229, 0.224, 0.225), help='default: imagenet data: (0.229, 0.224, 0.225). mask dataset data: (0.237, 0.247, 0.246)')
     parser.add_argument("--resize", nargs="+", type=list, default=[224, 224], help='resize size for image when training')
     parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
     parser.add_argument('--valid_batch_size', type=int, default=256, help='input batch size for validing (default: 256)')
