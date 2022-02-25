@@ -53,10 +53,27 @@ class Resnet18(PytorchModel):
         self.feature_extract = feature_extract
         self.use_pretrained = use_pretrained
 
-        self.model_ft = models.resnet18(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.model_ft = models.resnet18(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         num_ftrs = self.model_ft.fc.in_features
-        self.model_ft.fc = nn.Linear(num_ftrs, num_classes)
+        self.model_ft.fc = nn.Linear(num_ftrs, self.num_classes)
+        self.input_size = 224
+
+    def forward(self, x):
+        return self.model_ft(x)
+
+
+class Resnet50(PytorchModel):
+    def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
+        super().__init__()
+        self.num_classes = num_classes
+        self.feature_extract = feature_extract
+        self.use_pretrained = use_pretrained
+
+        self.model_ft = models.resnet50(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
+        num_ftrs = self.model_ft.fc.in_features
+        self.model_ft.fc = nn.Linear(num_ftrs, self.num_classes)
         self.input_size = 224
 
     def forward(self, x):
@@ -70,10 +87,10 @@ class Alexnet(PytorchModel):
         self.feature_extract = feature_extract
         self.use_pretrained = use_pretrained
 
-        self.model_ft = models.alexnet(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.model_ft = models.alexnet(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         num_ftrs = self.model_ft.classifier[6].in_features
-        self.model_ft.classifier[6] = nn.Linear(num_ftrs, num_classes)
+        self.model_ft.classifier[6] = nn.Linear(num_ftrs, self.num_classes)
         self.input_size = 224
 
     def forward(self, x):
@@ -87,10 +104,10 @@ class VGG11bn(PytorchModel):
         self.feature_extract = feature_extract
         self.use_pretrained = use_pretrained
 
-        self.model_ft = models.vgg11_bn(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.model_ft = models.vgg11_bn(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         num_ftrs = self.model_ft.classifier[6].in_features
-        self.model_ft.classifier[6] = nn.Linear(num_ftrs, num_classes)
+        self.model_ft.classifier[6] = nn.Linear(num_ftrs, self.num_classes)
         self.input_size = 224
 
     def forward(self, x):
@@ -104,27 +121,27 @@ class Squeezenet(PytorchModel):
         self.feature_extract = feature_extract
         self.use_pretrained = use_pretrained
 
-        self.model_ft = models.squeezenet1_0(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.model_ft = models.squeezenet1_0(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         self.model_ft.classifier[1] = nn.Conv2d(
             512, num_classes, kernel_size=(1, 1), stride=(1, 1)
         )
-        self.model_ft.num_classes = num_classes
+        self.model_ft.num_classes = self.num_classes
         self.input_size = 224
 
     def forward(self, x):
         return self.model_ft(x)
 
 
-class Densenet(PytorchModel):
+class Densenet121(PytorchModel):
     def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
         super().__init__()
         self.num_classes = num_classes
         self.feature_extract = feature_extract
         self.use_pretrained = use_pretrained
 
-        self.model_ft = models.densenet121(pretrained=use_pretrained)
-        self.set_parameter_requires_grad(self.model_ft, feature_extract)
+        self.model_ft = models.densenet121(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         num_ftrs = self.model_ft.classifier.in_features
         self.model_ft.classifier = nn.Linear(num_ftrs, self.num_classes)
         self.input_size = 224
