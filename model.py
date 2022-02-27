@@ -131,7 +131,7 @@ class Squeezenet(PytorchModel):
 
     def forward(self, x):
         return self.model_ft(x)
-
+        
 
 class Densenet121(PytorchModel):
     def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
@@ -156,7 +156,7 @@ class MyModel(nn.Module):
         super().__init__()
 
         """
-        1. 위와 같이 생성자의 parameter 에 num_claases 를 포함해주세요.
+        1. 위와 같이 생성자의 parameter 에 num_classes 를 포함해주세요.
         2. 나만의 모델 아키텍쳐를 디자인 해봅니다.
         3. 모델의 output_dimension 은 num_classes 로 설정해주세요.
         """
