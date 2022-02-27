@@ -99,7 +99,13 @@ def train(data_dir, model_dir, args):
     dataset = dataset_module(
         data_dir=data_dir,
     )
-    num_classes = dataset.num_classes  # 18
+    # task별로 모델 만들 때 num_classes 구하기
+    if args.multi_label == 'mask' or args.multi_label == 'age':
+        num_classes = 3
+    elif args.multi_label == 'gender':
+        num_classes = 2
+    else:
+        num_classes = 18
 
     # -- augmentation
     transform_module = getattr(import_module("dataset"), args.augmentation)  # default: BaseAugmentation
@@ -150,7 +156,8 @@ def train(data_dir, model_dir, args):
         lr=args.lr,
         weight_decay=args.weight_decay
     )
-    scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    # None if LR scheduler is not in use
+    scheduler = None # StepLR(optimizer, args.lr_decay_step, gamma=0.5)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -166,6 +173,12 @@ def train(data_dir, model_dir, args):
         matches = 0
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
+            if args.multi_label == 'mask':
+                labels = labels['mask']
+            elif args.multi_label == 'age':
+                labels = labels['age']
+            elif args.multi_label == 'gender':
+                labels = labels['gender']
             inputs = inputs.to(device)
             labels = labels.to(device)
 
@@ -193,8 +206,9 @@ def train(data_dir, model_dir, args):
 
                 loss_value = 0
                 matches = 0
-
-        scheduler.step()
+        # use LR scheduler only if scheduler is specified(default = None)
+        if scheduler:
+            scheduler.step()
 
         # val loop
         with torch.no_grad():
@@ -207,9 +221,14 @@ def train(data_dir, model_dir, args):
             figure = None
             for val_batch in val_loader:
                 inputs, labels = val_batch
+                if args.multi_label == 'mask':
+                    labels = labels['mask']
+                elif args.multi_label == 'age':
+                    labels = labels['age']
+                elif args.multi_label == 'gender':
+                    labels = labels['gender']
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-
                 outs = model(inputs)
                 preds = torch.argmax(outs, dim=-1)
 
@@ -277,7 +296,8 @@ if __name__ == '__main__':
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
     parser.add_argument('--pretrained', type=lambda x: bool(util.strtobool(x)), default=True, help='use torchvision pretrained model')
-    parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=True, help='freeze parameters of pretrained model except fc layer')
+    parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=False, help='freeze parameters of pretrained model except fc layer')
+    parser.add_argument('--multi_label', type=str, default=None, help='multi label (default: mask)')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
