@@ -10,7 +10,7 @@ from PIL import Image
 from torch.utils.data import Dataset, Subset, random_split
 from torchvision import transforms
 from torchvision.transforms import *
-from timm.data.auto_augment import auto_augment_transform
+from timm.data.auto_augment import auto_augment_transform, rand_augment_transform
 
 IMG_EXTENSIONS = [
     ".jpg", ".JPG", ".jpeg", ".JPEG", ".png",
@@ -44,6 +44,18 @@ class AutoAugmentation:
 
     def __call__(self, image):
         return self.transform(image)
+
+class RandomAugmentation:
+    def __init__(self, resize, mean, std, **args):
+        self.transform = transforms.Compose([
+            rand_augment_transform(config_str='rand-m9-mstd0.5', hparams={'translate_const': 117, 'img_mean': (124, 116, 104)}),
+            Resize(resize, Image.BILINEAR),
+            ToTensor(),
+            Normalize(mean=mean, std=std),
+        ])
+
+    def __call__(self, image):
+        return self.transform(image)       
 
 class AddGaussianNoise(object):
     """
@@ -304,6 +316,26 @@ class MaskSplitByProfileDataset(MaskBaseDataset):
 
     def split_dataset(self) -> List[Subset]:
         return [Subset(self, indices) for phase, indices in self.indices.items()]
+
+
+class MultiLabelDataset(MaskSplitByProfileDataset):
+    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2):
+        self.indices = defaultdict(list)
+        super().__init__(data_dir, mean, std, val_ratio)
+
+    def __getitem__(self, index):
+        assert self.transform is not None, ".set_tranform 메소드를 이용하여 transform 을 주입해주세요"
+
+        image = self.read_image(index)
+        mask_label = self.get_mask_label(index)
+        gender_label = self.get_gender_label(index)
+        age_label = self.get_age_label(index)
+        multi_class_label = self.encode_multi_class(mask_label, gender_label, age_label)
+        multi_label = {'mask': mask_label, 'age': age_label, 'gender': gender_label, 'label': multi_class_label}
+
+        image_transform = self.transform(image)
+
+        return image_transform, multi_label
 
 
 class TestDataset(Dataset):
