@@ -7,6 +7,7 @@ import random
 import re
 from importlib import import_module
 from pathlib import Path
+from distutils import util
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +15,7 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from sklearn.metrics import f1_score
 
 from dataset import MaskBaseDataset
 from loss import create_criterion
@@ -79,7 +81,7 @@ def increment_path(path, exist_ok=False):
         dirs = glob.glob(f"{path}*")
         matches = [re.search(rf"%s(\d+)" % path.stem, d) for d in dirs]
         i = [int(m.groups()[0]) for m in matches if m]
-        n = max(i) + 1 if i else 2
+        n = max(i) + 1 if i else 0
         return f"{path}{n}"
 
 
@@ -93,7 +95,7 @@ def train(data_dir, model_dir, args):
     device = torch.device("cuda" if use_cuda else "cpu")
 
     # -- dataset
-    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: BaseAugmentation
+    dataset_module = getattr(import_module("dataset"), args.dataset)  # default: MaskBaseDataset
     dataset = dataset_module(
         data_dir=data_dir,
     )
@@ -126,14 +128,18 @@ def train(data_dir, model_dir, args):
         num_workers=multiprocessing.cpu_count()//2,
         shuffle=False,
         pin_memory=use_cuda,
-        drop_last=True,
+        drop_last=False,
     )
 
     # -- model
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     model = model_module(
-        num_classes=num_classes
+        num_classes=num_classes,
+        feature_extract=args.feature_extract,
+        use_pretrained=args.pretrained
     ).to(device)
+
+
     model = torch.nn.DataParallel(model)
 
     # -- loss & metric
@@ -142,7 +148,7 @@ def train(data_dir, model_dir, args):
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr,
-        weight_decay=5e-4
+        weight_decay=args.weight_decay
     )
     scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
 
@@ -196,6 +202,8 @@ def train(data_dir, model_dir, args):
             model.eval()
             val_loss_items = []
             val_acc_items = []
+            target_tensor = []
+            pred_tensor = []
             figure = None
             for val_batch in val_loader:
                 inputs, labels = val_batch
@@ -210,6 +218,9 @@ def train(data_dir, model_dir, args):
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
+                pred_tensor.append(preds.cpu())
+                target_tensor.append(labels.cpu())
+
                 if figure is None:
                     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
                     inputs_np = dataset_module.denormalize_image(inputs_np, dataset.mean, dataset.std)
@@ -217,6 +228,7 @@ def train(data_dir, model_dir, args):
                         inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
                     )
 
+            val_f1 = f1_score(torch.cat(target_tensor), torch.cat(pred_tensor), average='macro')
             val_loss = np.sum(val_loss_items) / len(val_loader)
             val_acc = np.sum(val_acc_items) / len(val_set)
             best_val_loss = min(best_val_loss, val_loss)
@@ -226,16 +238,19 @@ def train(data_dir, model_dir, args):
                 best_val_acc = val_acc
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
             print(
-                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2} || "
+                f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2}, F1: {val_f1:4.4} || "
                 f"best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
             )
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
+            logger.add_scalar("Val/F1", val_f1, epoch)
             logger.add_figure("results", figure, epoch)
             print()
 
 
 if __name__ == '__main__':
+    torch.cuda.empty_cache()
+
     parser = argparse.ArgumentParser()
 
     from dotenv import load_dotenv
@@ -247,17 +262,22 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=1, help='number of epochs to train (default: 1)')
     parser.add_argument('--dataset', type=str, default='MaskBaseDataset', help='dataset augmentation type (default: MaskBaseDataset)')
     parser.add_argument('--augmentation', type=str, default='BaseAugmentation', help='data augmentation type (default: BaseAugmentation)')
-    parser.add_argument("--resize", nargs="+", type=list, default=[128, 96], help='resize size for image when training')
+    parser.add_argument('--dataset_mean', type=tuple, default=(0.485, 0.456, 0.406), help='default: imagenet data: (0.485, 0.456, 0.406). mask dataset data: (0.548, 0.504, 0.479)')
+    parser.add_argument('--dataset_std', type=tuple, default=(0.229, 0.224, 0.225), help='default: imagenet data: (0.229, 0.224, 0.225). mask dataset data: (0.237, 0.247, 0.246)')
+    parser.add_argument("--resize", nargs="+", type=list, default=[224, 224], help='resize size for image when training')
     parser.add_argument('--batch_size', type=int, default=64, help='input batch size for training (default: 64)')
-    parser.add_argument('--valid_batch_size', type=int, default=1000, help='input batch size for validing (default: 1000)')
+    parser.add_argument('--valid_batch_size', type=int, default=256, help='input batch size for validing (default: 256)')
     parser.add_argument('--model', type=str, default='BaseModel', help='model type (default: BaseModel)')
-    parser.add_argument('--optimizer', type=str, default='SGD', help='optimizer type (default: SGD)')
-    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate (default: 1e-3)')
+    parser.add_argument('--optimizer', type=str, default='Adam', help='optimizer type (default: Adam)')
+    parser.add_argument('--lr', type=float, default=1e-4, help='learning rate (default: 1e-4)')
+    parser.add_argument('--weight_decay', type=float, default=0, help='weight decay (defalut: 0)')
     parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
     parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
-    parser.add_argument('--lr_decay_step', type=int, default=20, help='learning rate scheduler deacy step (default: 20)')
+    parser.add_argument('--lr_decay_step', type=int, default=1000, help='learning rate scheduler deacy step (default: 1000)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
+    parser.add_argument('--pretrained', type=lambda x: bool(util.strtobool(x)), default=True, help='use torchvision pretrained model')
+    parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=True, help='freeze parameters of pretrained model except fc layer')
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))

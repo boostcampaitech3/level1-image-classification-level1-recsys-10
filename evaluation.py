@@ -35,11 +35,11 @@ def evaluation(gt_dir, pred_dir):
     }
 
     return json.dumps(results)
+    
+if __name__ == '__main__':
+   gt_dir = os.environ.get('SM_GROUND_TRUTH_DIR')
+   pred_dir = os.environ.get('SM_OUTPUT_DATA_DIR')
 
-#if __name__ == '__main__':
-#    gt_dir = os.environ.get('SM_GROUND_TRUTH_DIR')
-#    pred_dir = os.environ.get('SM_OUTPUT_DATA_DIR')
-#
-#    from pprint import pprint
-#    results = evaluation(gt_dir, pred_dir)
-#    pprint(results)
+   from pprint import pprint
+   results = evaluation(gt_dir, pred_dir)
+   pprint(results)
