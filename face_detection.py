@@ -105,7 +105,7 @@ if __name__ == '__main__':
 
     # train, eval directories
     parser.add_argument('--data_type', type=str, default='train', help="data type, train or eval (default='train')")
-    parser.add_argument('--size', type=int, default='20000', help="data size, width*hegiht (default='10000')")
+    parser.add_argument('--size', type=int, default='10000', help="data size, width*hegiht (default='10000')")
 
     args = parser.parse_args()
 
