@@ -476,7 +476,7 @@ class AgeDataset(MaskSplitByProfileDataset) :
 
 
 class MultiLabelDataset(MaskSplitByProfileDataset):
-    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
+    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0, **kwargs):
         self.indices = defaultdict(list)
         super().__init__(data_dir, mean, std, val_ratio, kfold, k)
 

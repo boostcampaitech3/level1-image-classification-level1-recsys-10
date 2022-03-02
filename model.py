@@ -64,6 +64,46 @@ class Resnet18(PytorchModel):
         return self.model_ft(x)
 
 
+class MultiClassResnet18(PytorchModel):
+    def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
+        super().__init__()
+        self.num_classes = num_classes
+        self.feature_extract = feature_extract
+        self.use_pretrained = use_pretrained
+        self.input_size = 224
+
+        self.model_ft = models.resnet18(pretrained=self.use_pretrained)
+        self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
+        num_ftrs = self.model_ft.fc.in_features
+        self.model_wo_fc = nn.Sequential(*(list(self.model_ft.children())[:-1]))
+
+        self.age = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features=num_ftrs, out_features=3)
+        )
+
+        self.gender = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features=num_ftrs, out_features=2)
+        )
+        
+        self.mask = nn.Sequential(
+            nn.Dropout(p=0.5),
+            nn.Linear(in_features=num_ftrs, out_features=3)
+        )
+
+    def forward(self, x):
+        x = self.model_wo_fc(x)
+        x = torch.flatten(x, 1)
+
+        return {
+            'age': self.age(x),
+            'gender': self.gender(x),
+            'mask': self.mask(x)
+        }
+
+
+
 class Resnet50(PytorchModel):
     def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
         super().__init__()

@@ -15,6 +15,7 @@ import torch
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 from sklearn.metrics import f1_score
 
 from dataset import MaskBaseDataset
@@ -88,6 +89,7 @@ def increment_path(path, exist_ok=False):
 
 def train(k, data_dir, model_dir, args):
     seed_everything(args.seed)
+    tasks = ["mask", "gender", "age"]
 
     save_dir = increment_path(os.path.join(model_dir, 'k'+str(k), args.name))
 
@@ -154,10 +156,21 @@ def train(k, data_dir, model_dir, args):
     model = torch.nn.DataParallel(model)
 
     # -- loss & metric
-    criterion = create_criterion(args.criterion)  # default: cross_entropy
+    def multi_criterion(loss_func, outputs, pictures):
+        losses = 0
+        # for i, key in enumerate(outputs):
+        losses += 0.4 * loss_func(outputs['age'], pictures['age'].to(device))
+        losses += 0.3 * loss_func(outputs['gender'], pictures['gender'].to(device))
+        losses += 0.3 * loss_func(outputs['mask'], pictures['mask'].to(device))
+        return losses
+    loss_func = nn.CrossEntropyLoss()
+
+    if not args.criterion == 'multi':
+        criterion = create_criterion(args.criterion)  # default: cross_entropy
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
     optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()),
+        # filter(lambda p: p.requires_grad, model.parameters()),
+        model.parameters(), # 레이어 프리즈하다 프리즈 풀고 트레이닝 하기 위해 수정
         lr=args.lr,
         weight_decay=args.weight_decay
     )
@@ -176,42 +189,68 @@ def train(k, data_dir, model_dir, args):
     data_mix = getattr(import_module("dataset"), args.data_mix)
 
     for epoch in range(args.epochs):
+        if epoch == 2:
+            for param in model.parameters():
+                param.requires_grad = True
         # train loop
         model.train()
         loss_value = 0
+        matches = 0
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
-            if args.multi_label == 'mask':
-                labels = labels['mask']
-            elif args.multi_label == 'age':
-                labels = labels['age']
-            elif args.multi_label == 'gender':
-                labels = labels['gender']
+            preds = {}
+            if not args.criterion == 'multi':
+                if args.multi_label == 'mask':
+                    labels = labels['mask']
+                elif args.multi_label == 'age':
+                    labels = labels['age']
+                elif args.multi_label == 'gender':
+                    labels = labels['gender']
 
             optimizer.zero_grad()
         
-            if np.random.random() < args.mixp:
-                inputs, lam, target_a, target_b = data_mix(inputs, labels, device)
-                outs = model(inputs)
-                loss = criterion(outs, target_a) * lam + criterion(outs, target_b) * (1.-lam)
-            else :
+            if not args.mixp == 0.:
+                if np.random.random() < args.mixp:
+                    inputs, lam, target_a, target_b = data_mix(inputs, labels, device)
+                    outs = model(inputs)
+                    loss = criterion(outs, target_a) * lam + criterion(outs, target_b) * (1.-lam)
+                else :
+                    inputs = inputs.to(device)
+                    labels = labels.to(device)
+                    outs = model(inputs)
+                    loss = criterion(outs, labels)
+            else:
                 inputs = inputs.to(device)
-                labels = labels.to(device)
                 outs = model(inputs)
-                loss = criterion(outs, labels)
+                if not args.criterion == 'multi':
+                    labels = labels.to(device)
+            
+            if args.criterion =='multi':
+                for task in tasks:
+                    preds[task] = torch.argmax(outs[task], dim=-1)
+                loss = multi_criterion(loss_func, outs, labels)
+            else:
+                preds = torch.argmax(outs, dim=-1)
 
+            
+            preds = MaskBaseDataset.encode_multi_class(preds['mask'],preds['gender'],preds['age'])
             loss.backward()
             optimizer.step()
 
             loss_value += loss.item()
+            if args.criterion =='multi':
+                matches += (preds.cpu() == labels['label'].cpu()).sum().item()
+
             if (idx + 1) % args.log_interval == 0:
                 train_loss = loss_value / args.log_interval
+                train_acc = matches / args.batch_size / args.log_interval
                 current_lr = get_lr(optimizer)
                 print(
                     f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
-                    f"training loss {train_loss:4.4}  || lr {current_lr}"
+                    f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
                 )
                 logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
+                logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
 
                 loss_value = 0
                 matches = 0
@@ -229,24 +268,43 @@ def train(k, data_dir, model_dir, args):
             figure = None
             for val_batch in val_loader:
                 inputs, labels = val_batch
-                if args.multi_label == 'mask':
-                    labels = labels['mask']
-                elif args.multi_label == 'age':
-                    labels = labels['age']
-                elif args.multi_label == 'gender':
-                    labels = labels['gender']
+                preds = {}
+                if not args.criterion == 'multi':
+                    if args.multi_label == 'mask':
+                        labels = labels['mask']
+                    elif args.multi_label == 'age' or args.multi_label == 'eightage':
+                        labels = labels['age']
+                    elif args.multi_label == 'gender':
+                        labels = labels['gender']
                 inputs = inputs.to(device)
-                labels = labels.to(device)
-                outs = model(inputs)
-                preds = torch.argmax(outs, dim=-1)
+                if not args.criterion == 'multi':
+                    labels = labels.to(device)
 
-                loss_item = criterion(outs, labels).item()
-                acc_item = (labels == preds).sum().item()
+                outs = model(inputs)
+
+                if args.criterion =='multi':
+                    for task in tasks:
+                        preds[task] = torch.argmax(outs[task], dim=-1)
+                    loss = multi_criterion(loss_func, outs, labels)
+                    preds = MaskBaseDataset.encode_multi_class(preds['mask'],preds['gender'],preds['age'])
+                    acc_item = (labels['label'].cpu() == preds.cpu()).sum().item()
+                    loss_item = loss.item()
+                    target_tensor.append(labels['label'].cpu())
+                    # losses.append(loss.item())
+                else:
+                    loss = criterion(outs, labels)
+                    preds = torch.argmax(outs, dim=-1)
+                    loss_item = criterion(outs, labels).item()
+                    acc_item = (labels == preds).sum().item()
+                    target_tensor.append(labels.cpu())
+
+                # loss_item = criterion(outs, labels).item()
+                # acc_item = (labels == preds).sum().item()
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
                 pred_tensor.append(preds.cpu())
-                target_tensor.append(labels.cpu())
+                # target_tensor.append(labels.cpu())
 
                 if figure is None:
                     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
@@ -315,6 +373,7 @@ if __name__ == '__main__':
     parser.add_argument('--k', type=int, default=0, help='set kfold num (default:0)')
     parser.add_argument('--images', type=str, default='aging_cyclegan', help='images or fdimages')
     parser.add_argument('--data_selection', type=str, default='1_0_0', help="How to use a data; 'real images'_'threshold of old fake images'_'threshold of young fake images'")
+    parser.add_argument('--wrong_image', type=lambda x: bool(util.strtobool(x)), default=False)
 
 
     # Container environment
