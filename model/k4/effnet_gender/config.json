@@ -1,0 +1,42 @@
+{
+    "seed": 42,
+    "epochs": 5,
+    "dataset": "AgeDataset",
+    "augmentation": "TestAugmentation",
+    "dataset_mean": [
+        0.485,
+        0.456,
+        0.406
+    ],
+    "dataset_std": [
+        0.229,
+        0.224,
+        0.225
+    ],
+    "resize": [
+        224,
+        224
+    ],
+    "batch_size": 64,
+    "valid_batch_size": 256,
+    "model": "Effnet",
+    "optimizer": "Adam",
+    "lr": 0.0001,
+    "weight_decay": 0,
+    "val_ratio": 0.2,
+    "criterion": "cross_entropy",
+    "lr_decay_step": 1000,
+    "log_interval": 20,
+    "name": "effnet_gender",
+    "pretrained": true,
+    "feature_extract": false,
+    "multi_label": null,
+    "data_mix": "cutmix",
+    "mixp": 0.3,
+    "kfold": 5,
+    "k": 4,
+    "images": "aging_cyclegan",
+    "data_selection": "1_0_0",
+    "data_dir": "/opt/ml/input/data/aging_cyclegan",
+    "model_dir": "./model"
+}
