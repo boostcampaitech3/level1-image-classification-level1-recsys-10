@@ -36,7 +36,7 @@ def inference(data_dir, model_dir, output_dir, args):
     model = load_model(model_dir, num_classes, device).to(device)
     model.eval()
 
-    img_root = os.path.join(data_dir, 'images')
+    img_root = os.path.join(data_dir, 'fdimages')
     info_path = os.path.join(data_dir, 'info.csv')
     info = pd.read_csv(info_path)
 
@@ -75,7 +75,7 @@ if __name__ == '__main__':
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_EVAL', '/opt/ml/input/data/eval'))
-    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model'))
+    parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_CHANNEL_MODEL', './model/k4/effnet'))
     parser.add_argument('--output_dir', type=str, default=os.environ.get('SM_OUTPUT_DATA_DIR', './output'))
 
     args = parser.parse_args()
