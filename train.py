@@ -8,6 +8,7 @@ import re
 from importlib import import_module
 from pathlib import Path
 from distutils import util
+import shutil
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -16,6 +17,7 @@ from torch.optim.lr_scheduler import StepLR
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.metrics import f1_score
+from PIL import Image
 
 from dataset import MaskBaseDataset
 from loss import create_criterion
@@ -52,6 +54,7 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
         # title = f"gt: {gt}, pred: {pred}"
         gt_decoded_labels = MaskBaseDataset.decode_multi_class(gt)
         pred_decoded_labels = MaskBaseDataset.decode_multi_class(pred)
+        # pred_decoded_labels = (0, 0, pred)
         title = "\n".join([
             f"{task} - gt: {gt_label}, pred: {pred_label}"
             for gt_label, pred_label, task
@@ -65,6 +68,91 @@ def grid_image(np_images, gts, preds, n=16, shuffle=False):
         plt.imshow(image, cmap=plt.cm.binary)
 
     return figure
+
+
+def grid_wrong_image(model, task, logger):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    dataset_module = getattr(import_module("dataset"), 'WrongImageDataset')
+    dataset = dataset_module(data_dir=data_dir)
+
+    transform_module = getattr(import_module("dataset"), 'BaseAugmentation')  # default: BaseAugmentation
+    transform = transform_module(
+        resize=args.resize,
+        mean=dataset.mean,
+        std=dataset.std,
+    )
+    dataset.set_transform(transform)
+
+    _, val_set = dataset.split_dataset()
+
+    valid_loader = DataLoader(
+        val_set,
+        batch_size=args.valid_batch_size,
+        num_workers=multiprocessing.cpu_count()//2,
+        shuffle=False,
+        pin_memory=True,
+        drop_last=False,
+    )
+
+    with torch.no_grad():
+        model.eval()
+        imglist = []
+        labellist = []
+        predlist = []
+        for val_batch in valid_loader:
+            inputs, labels, img_path = val_batch
+            if args.multi_label == 'mask':
+                labels = labels['mask']
+            elif args.multi_label == 'age':
+                labels = labels['age']
+            elif args.multi_label == 'gender':
+                labels = labels['gender']
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            outs = model(inputs)
+            preds = torch.argmax(outs, dim=-1)
+
+            incorrect_item = (labels != preds).cpu().numpy()
+            img_path = np.array(img_path)
+
+            imglist += list(img_path[incorrect_item])
+            labellist += list(labels.detach().cpu().numpy()[incorrect_item])
+            predlist += list(preds[incorrect_item])
+
+
+    num_imgs = len(imglist)
+    figure = plt.figure(figsize=(12, 22))  # cautions: hardcoded, 이미지 크기에 따라 figsize 를 조정해야 할 수 있습니다. T.T
+    # plt.subplots_adjust(top=0.8)
+    step = 0
+    tasks = ["mask", "gender", "age"]
+    print(f"Number of wrong images: {num_imgs}")
+    for idx in range(num_imgs):
+        image = Image.open(imglist[idx])
+        # image = np.array(image)
+        pred = predlist[idx]
+        gt = labellist[idx]
+        gt_decoded_labels = MaskBaseDataset.decode_multi_class(gt)
+        pred_decoded_labels = (0, 0, pred)
+        title = "\n".join([
+            f"{task} - gt: {gt_label}, pred: {pred_label}"
+            for gt_label, pred_label, task
+            in zip(gt_decoded_labels, pred_decoded_labels, tasks)
+        ])
+
+        # plt.subplot(num_imgs//4+1, 4, idx+1, title=title)
+        plt.subplot(5, 4, idx%20+1, title=title)
+        plt.xticks([])
+        plt.yticks([])
+        plt.grid(False)
+        plt.imshow(image, cmap=plt.cm.binary)
+        if (idx+1)%20 == 0:
+            logger.add_figure("Wrong Images", figure, step)
+            plt.clf()
+            plt.cla()
+            figure = plt.figure(figsize=(12, 22))
+            
+            step += 1
 
 
 def increment_path(path, exist_ok=False):
@@ -85,19 +173,23 @@ def increment_path(path, exist_ok=False):
         return f"{path}{n}"
 
 
-def train(data_dir, model_dir, args):
+def train(data_dir, model_dir, args, k):
     seed_everything(args.seed)
 
-    save_dir = increment_path(os.path.join(model_dir, args.name))
+    save_dir = increment_path(os.path.join(model_dir, args.name, args.multi_label, 'fold'))
 
     # -- settings
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
-
+    print('k!!!!',k)
     # -- dataset
+    dataset_module = None
     dataset_module = getattr(import_module("dataset"), args.dataset)  # default: MaskBaseDataset
+    dataset = None
     dataset = dataset_module(
         data_dir=data_dir,
+        kfold = args.kfold,
+        k = k
     )
     # task별로 모델 만들 때 num_classes 구하기
     if args.multi_label == 'mask' or args.multi_label == 'age':
@@ -117,6 +209,8 @@ def train(data_dir, model_dir, args):
     dataset.set_transform(transform)
 
     # -- data_loader
+    # print(dataset.split_dataset())
+    train_set, val_set, train_loader, val_loader = None, None, None, None
     train_set, val_set = dataset.split_dataset()
 
     train_loader = DataLoader(
@@ -137,6 +231,8 @@ def train(data_dir, model_dir, args):
         drop_last=False,
     )
 
+    # print(list(val_loader)[0][1]['label'])
+
     # -- model
     model_module = getattr(import_module("model"), args.model)  # default: BaseModel
     model = model_module(
@@ -151,13 +247,19 @@ def train(data_dir, model_dir, args):
     # -- loss & metric
     criterion = create_criterion(args.criterion)  # default: cross_entropy
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
+    # optimizer = opt_module(
+    #     filter(lambda p: p.requires_grad, model.parameters()),
+    #     lr=args.lr,
+    #     weight_decay=args.weight_decay
+    # )
     optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()),
+        model.parameters(),
         lr=args.lr,
         weight_decay=args.weight_decay
     )
     # None if LR scheduler is not in use
-    scheduler = None # StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    scheduler = None
+    # scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.3)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -166,7 +268,12 @@ def train(data_dir, model_dir, args):
 
     best_val_acc = 0
     best_val_loss = np.inf
+
+    print(f'({k+1}/{args.kfold}) fold')
     for epoch in range(args.epochs):
+        # if epoch == 1:
+        #     for param in model.parameters():
+        #         param.requires_grad = True
         # train loop
         model.train()
         loss_value = 0
@@ -175,7 +282,7 @@ def train(data_dir, model_dir, args):
             inputs, labels = train_batch
             if args.multi_label == 'mask':
                 labels = labels['mask']
-            elif args.multi_label == 'age':
+            elif args.multi_label == 'age' or args.multi_label == 'eightage':
                 labels = labels['age']
             elif args.multi_label == 'gender':
                 labels = labels['gender']
@@ -198,7 +305,7 @@ def train(data_dir, model_dir, args):
                 train_acc = matches / args.batch_size / args.log_interval
                 current_lr = get_lr(optimizer)
                 print(
-                    f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
+                    f"Epoch[{epoch+1}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
                     f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
                 )
                 logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
@@ -223,7 +330,7 @@ def train(data_dir, model_dir, args):
                 inputs, labels = val_batch
                 if args.multi_label == 'mask':
                     labels = labels['mask']
-                elif args.multi_label == 'age':
+                elif args.multi_label == 'age' or args.multi_label == 'eightage':
                     labels = labels['age']
                 elif args.multi_label == 'gender':
                     labels = labels['gender']
@@ -265,7 +372,9 @@ def train(data_dir, model_dir, args):
             logger.add_scalar("Val/F1", val_f1, epoch)
             logger.add_figure("results", figure, epoch)
             print()
-
+    if args.wrong_image:
+        grid_wrong_image(model, 'age', logger)
+    logger.close()
 
 if __name__ == '__main__':
     torch.cuda.empty_cache()
@@ -292,12 +401,16 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=0, help='weight decay (defalut: 0)')
     parser.add_argument('--val_ratio', type=float, default=0.2, help='ratio for validaton (default: 0.2)')
     parser.add_argument('--criterion', type=str, default='cross_entropy', help='criterion type (default: cross_entropy)')
-    parser.add_argument('--lr_decay_step', type=int, default=1000, help='learning rate scheduler deacy step (default: 1000)')
+    parser.add_argument('--lr_decay_step', type=int, default=1, help='learning rate scheduler deacy step (default: 1)')
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
     parser.add_argument('--pretrained', type=lambda x: bool(util.strtobool(x)), default=True, help='use torchvision pretrained model')
     parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=False, help='freeze parameters of pretrained model except fc layer')
     parser.add_argument('--multi_label', type=str, default=None, help='multi label (default: mask)')
+    parser.add_argument('--kfold', type=int, default=5, help='KFold validation. (default: 5)')
+    # parser.add_argument('--k', type=int, default=0, help='(k)th dataset. starts from 0 (default: 0)')
+    parser.add_argument('--ensemble', type=lambda x: bool(util.strtobool(x)), default=False)
+    parser.add_argument('--wrong_image', type=lambda x: bool(util.strtobool(x)), default=False)
 
     # Container environment
     parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
@@ -309,4 +422,10 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     model_dir = args.model_dir
 
-    train(data_dir, model_dir, args)
+    # train(data_dir, model_dir, args)
+
+# KFold
+    # for k in range(2,args.kfold):
+    #     print('k: ', k)
+    train(data_dir, model_dir, args, 0)
+    train(data_dir, model_dir, args, 1)
