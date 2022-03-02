@@ -100,7 +100,8 @@ def train(k, data_dir, model_dir, args):
     dataset = dataset_module(
         data_dir=data_dir,
         kfold = args.kfold,
-        k=k,
+        k=args.k,
+        age_parameter=args.data_selection
     )
     # task별로 모델 만들 때 num_classes 구하기
     if args.multi_label == 'mask' or args.multi_label == 'age':
@@ -118,7 +119,7 @@ def train(k, data_dir, model_dir, args):
         std=dataset.std,
     )
     dataset.set_transform(transform)
-
+    
     # -- data_loader
     train_set, val_set = dataset.split_dataset()
 
@@ -311,13 +312,14 @@ if __name__ == '__main__':
     parser.add_argument('--mixp', type=float, default=0., help='cutmix probability (default : 0.5)')
     parser.add_argument('--kfold', type=int, default=5, help='set kfold num (default:5)')
     parser.add_argument('--k', type=int, default=0, help='set kfold num (default:0)')
-    parser.add_argument('--images', type=str, default='images', help='images or fdimages')
+    parser.add_argument('--images', type=str, default='aging_cyclegan', help='images or fdimages')
+    parser.add_argument('--data_selection', type=str, default='1_0_0', help="How to use a data; 'real images'_'threshold of old fake images'_'threshold of young fake images'")
 
 
     # Container environment
     args = parser.parse_args()
 
-    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/' + args.images))
+    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/' + args.images))
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
 
     args = parser.parse_args()
