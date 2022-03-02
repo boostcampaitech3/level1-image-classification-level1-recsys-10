@@ -144,7 +144,11 @@ class Densenet121(PytorchModel):
         self.model_ft = models.densenet121(pretrained=self.use_pretrained)
         self.set_parameter_requires_grad(self.model_ft, self.feature_extract)
         num_ftrs = self.model_ft.classifier.in_features
+        
         self.model_ft.classifier = nn.Linear(num_ftrs, self.num_classes)
+        self.model_ft.classifier = nn.Linear(num_ftrs, self.num_classes)
+        self.model_ft.classifier = nn.Linear(num_ftrs, self.num_classes)
+
         self.input_size = 224
 
     def forward(self, x):
