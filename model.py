@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
-
+import timm
+import torchvision
 
 class BaseModel(nn.Module):
     def __init__(self, num_classes, **kwargs):
@@ -131,7 +132,7 @@ class Squeezenet(PytorchModel):
 
     def forward(self, x):
         return self.model_ft(x)
-
+        
 
 class Densenet121(PytorchModel):
     def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
@@ -149,14 +150,26 @@ class Densenet121(PytorchModel):
     def forward(self, x):
         return self.model_ft(x)
 
+class Effnet(PytorchModel):
+    def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
+        super().__init__()
+        self.num_classes = num_classes
+        self.feature_extract = feature_extract
+        self.use_pretrained = use_pretrained
 
+        self.model_ft = timm.create_model('efficientnet_b1', pretrained=self.use_pretrained, num_classes=self.num_classes)
+    
+    def forward(self, x):
+        return self.model_ft(x)
+
+        
 # Custom Model Template
 class MyModel(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
 
         """
-        1. 위와 같이 생성자의 parameter 에 num_claases 를 포함해주세요.
+        1. 위와 같이 생성자의 parameter 에 num_classes 를 포함해주세요.
         2. 나만의 모델 아키텍쳐를 디자인 해봅니다.
         3. 모델의 output_dimension 은 num_classes 로 설정해주세요.
         """
@@ -167,3 +180,15 @@ class MyModel(nn.Module):
         2. 결과로 나온 output 을 return 해주세요
         """
         return x
+
+class Effnet(PytorchModel):
+    def __init__(self, num_classes, feature_extract=True, use_pretrained=True):
+        super().__init__()
+        self.num_classes = num_classes
+        self.feature_extract = feature_extract
+        self.use_pretrained = use_pretrained
+
+        self.model_ft = timm.create_model('efficientnet_b1', pretrained=self.use_pretrained, num_classes=self.num_classes)
+    
+    def forward(self, x):
+        return self.model_ft(x)

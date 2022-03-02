@@ -21,6 +21,7 @@ from dataset import MaskBaseDataset
 from loss import create_criterion
 
 
+
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -81,14 +82,14 @@ def increment_path(path, exist_ok=False):
         dirs = glob.glob(f"{path}*")
         matches = [re.search(rf"%s(\d+)" % path.stem, d) for d in dirs]
         i = [int(m.groups()[0]) for m in matches if m]
-        n = max(i) + 1 if i else 0
+        n = max(i) + 1 if i else 1
         return f"{path}{n}"
 
 
-def train(data_dir, model_dir, args):
+def train(k, data_dir, model_dir, args):
     seed_everything(args.seed)
 
-    save_dir = increment_path(os.path.join(model_dir, args.name))
+    save_dir = increment_path(os.path.join(model_dir, 'k'+str(k), args.name))
 
     # -- settings
     use_cuda = torch.cuda.is_available()
@@ -98,8 +99,16 @@ def train(data_dir, model_dir, args):
     dataset_module = getattr(import_module("dataset"), args.dataset)  # default: MaskBaseDataset
     dataset = dataset_module(
         data_dir=data_dir,
+        kfold = args.kfold,
+        k=k,
     )
-    num_classes = dataset.num_classes  # 18
+    # task별로 모델 만들 때 num_classes 구하기
+    if args.multi_label == 'mask' or args.multi_label == 'age':
+        num_classes = 3
+    elif args.multi_label == 'gender':
+        num_classes = 2
+    else:
+        num_classes = 18
 
     # -- augmentation
     transform_module = getattr(import_module("dataset"), args.augmentation)  # default: BaseAugmentation
@@ -150,7 +159,8 @@ def train(data_dir, model_dir, args):
         lr=args.lr,
         weight_decay=args.weight_decay
     )
-    scheduler = StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    # None if LR scheduler is not in use
+    scheduler = None # StepLR(optimizer, args.lr_decay_step, gamma=0.5)
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -159,42 +169,52 @@ def train(data_dir, model_dir, args):
 
     best_val_acc = 0
     best_val_loss = np.inf
+    best_f1_score = 0
+
+    data_mix = getattr(import_module("dataset"), args.data_mix)
+
     for epoch in range(args.epochs):
         # train loop
         model.train()
         loss_value = 0
-        matches = 0
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
-            inputs = inputs.to(device)
-            labels = labels.to(device)
+            if args.multi_label == 'mask':
+                labels = labels['mask']
+            elif args.multi_label == 'age':
+                labels = labels['age']
+            elif args.multi_label == 'gender':
+                labels = labels['gender']
 
             optimizer.zero_grad()
-
-            outs = model(inputs)
-            preds = torch.argmax(outs, dim=-1)
-            loss = criterion(outs, labels)
+        
+            if np.random.random() < args.mixp:
+                inputs, lam, target_a, target_b = data_mix(inputs, labels, device)
+                outs = model(inputs)
+                loss = criterion(outs, target_a) * lam + criterion(outs, target_b) * (1.-lam)
+            else :
+                inputs = inputs.to(device)
+                labels = labels.to(device)
+                outs = model(inputs)
+                loss = criterion(outs, labels)
 
             loss.backward()
             optimizer.step()
 
             loss_value += loss.item()
-            matches += (preds == labels).sum().item()
             if (idx + 1) % args.log_interval == 0:
                 train_loss = loss_value / args.log_interval
-                train_acc = matches / args.batch_size / args.log_interval
                 current_lr = get_lr(optimizer)
                 print(
                     f"Epoch[{epoch}/{args.epochs}]({idx + 1}/{len(train_loader)}) || "
-                    f"training loss {train_loss:4.4} || training accuracy {train_acc:4.2%} || lr {current_lr}"
+                    f"training loss {train_loss:4.4}  || lr {current_lr}"
                 )
                 logger.add_scalar("Train/loss", train_loss, epoch * len(train_loader) + idx)
-                logger.add_scalar("Train/accuracy", train_acc, epoch * len(train_loader) + idx)
 
                 loss_value = 0
                 matches = 0
-
-        scheduler.step()
+        if scheduler:
+            scheduler.step()
 
         # val loop
         with torch.no_grad():
@@ -207,9 +227,14 @@ def train(data_dir, model_dir, args):
             figure = None
             for val_batch in val_loader:
                 inputs, labels = val_batch
+                if args.multi_label == 'mask':
+                    labels = labels['mask']
+                elif args.multi_label == 'age':
+                    labels = labels['age']
+                elif args.multi_label == 'gender':
+                    labels = labels['gender']
                 inputs = inputs.to(device)
                 labels = labels.to(device)
-
                 outs = model(inputs)
                 preds = torch.argmax(outs, dim=-1)
 
@@ -231,16 +256,19 @@ def train(data_dir, model_dir, args):
             val_f1 = f1_score(torch.cat(target_tensor), torch.cat(pred_tensor), average='macro')
             val_loss = np.sum(val_loss_items) / len(val_loader)
             val_acc = np.sum(val_acc_items) / len(val_set)
+            best_val_acc = max(best_val_acc, val_acc)
             best_val_loss = min(best_val_loss, val_loss)
-            if val_acc > best_val_acc:
-                print(f"New best model for val accuracy : {val_acc:4.2%}! saving the best model..")
+
+            if val_f1 > best_f1_score:
+                print(f"New best model for val f1 : {val_f1:4.2%}! saving the best model..")
                 torch.save(model.module.state_dict(), f"{save_dir}/best.pth")
-                best_val_acc = val_acc
+                best_f1_score = val_f1
             torch.save(model.module.state_dict(), f"{save_dir}/last.pth")
             print(
                 f"[Val] acc : {val_acc:4.2%}, loss: {val_loss:4.2}, F1: {val_f1:4.4} || "
                 f"best acc : {best_val_acc:4.2%}, best loss: {best_val_loss:4.2}"
             )
+
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/F1", val_f1, epoch)
@@ -277,10 +305,19 @@ if __name__ == '__main__':
     parser.add_argument('--log_interval', type=int, default=20, help='how many batches to wait before logging training status')
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
     parser.add_argument('--pretrained', type=lambda x: bool(util.strtobool(x)), default=True, help='use torchvision pretrained model')
-    parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=True, help='freeze parameters of pretrained model except fc layer')
+    parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=False, help='freeze parameters of pretrained model except fc layer')
+    parser.add_argument('--multi_label', type=str, default=None, help='multi label (default: mask)')
+    parser.add_argument('--data_mix', type=str, default="mixup", help='mixup or cutmix batch (default : mixup)')
+    parser.add_argument('--mixp', type=float, default=0., help='cutmix probability (default : 0.5)')
+    parser.add_argument('--kfold', type=int, default=5, help='set kfold num (default:5)')
+    parser.add_argument('--k', type=int, default=0, help='set kfold num (default:0)')
+    parser.add_argument('--images', type=str, default='images', help='images or fdimages')
+
 
     # Container environment
-    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/images'))
+    args = parser.parse_args()
+
+    parser.add_argument('--data_dir', type=str, default=os.environ.get('SM_CHANNEL_TRAIN', '/opt/ml/input/data/train/' + args.images))
     parser.add_argument('--model_dir', type=str, default=os.environ.get('SM_MODEL_DIR', './model'))
 
     args = parser.parse_args()
@@ -289,4 +326,5 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     model_dir = args.model_dir
 
-    train(data_dir, model_dir, args)
+    
+    train(args.k, data_dir, model_dir, args)

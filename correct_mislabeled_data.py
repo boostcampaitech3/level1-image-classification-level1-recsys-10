@@ -1,5 +1,3 @@
-# AI stages 게시판에 김주영, 정시현님이 남겨주신 mislabel data 수정 코드입니다.
-
 import os
 from glob import glob
 import pandas as pd

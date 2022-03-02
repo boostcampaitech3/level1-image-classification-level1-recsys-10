@@ -10,7 +10,8 @@ from PIL import Image
 from torch.utils.data import Dataset, Subset, random_split
 from torchvision import transforms
 from torchvision.transforms import *
-from timm.data.auto_augment import auto_augment_transform
+from timm.data.auto_augment import auto_augment_transform, rand_augment_transform
+from sklearn.model_selection import StratifiedKFold
 
 IMG_EXTENSIONS = [
     ".jpg", ".JPG", ".jpeg", ".JPEG", ".png",
@@ -21,6 +22,63 @@ IMG_EXTENSIONS = [
 def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
+def mixup(inputs, labels, device, alpha=1.0):
+    '''Returns mixed inputs, pairs of targets, and lambda'''
+    inputs = inputs.to(device)
+    labels = labels.to(device)
+    
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+
+    batch_size = inputs.size()[0]
+    index = torch.randperm(batch_size).to(device)
+
+    inputs = lam * inputs + (1 - lam) * inputs[index, :]
+    target_a, target_b = labels, labels[index]
+
+    return inputs, lam,  target_a, target_b
+
+def cutmix(inputs, labels, device):
+    inputs = inputs.to(device)
+    labels = labels.to(device)
+    
+    lam = np.random.beta(1.0, 1.0)
+    rand_index = torch.randperm(inputs.size()[0]).to(device)
+    shuffled_labels = labels[rand_index]
+
+    bbx1, bby1, bbx2, bby2 = rand_bbox(inputs.size(), lam)
+    inputs[:,:,bbx1:bbx2, bby1:bby2] = inputs[rand_index,:,bbx1:bbx2, bby1:bby2]
+
+    target_a = labels
+    target_b = labels[rand_index]
+
+
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (inputs.size()[-1] * inputs.size()[-2])) # 람다 조정
+
+    return inputs, lam, target_a, target_b
+
+    
+def rand_bbox(size, lam): # size : [B, C, W, H]
+    W = size[2] # 이미지의 width
+    H = size[3] # 이미지의 height
+    cut_rat = np.sqrt(1. - lam)  # 패치 크기의 비율 정하기
+    cut_w = np.int(W * cut_rat)  # 패치의 너비
+    cut_h = np.int(H * cut_rat)  # 패치의 높이
+
+    # uniform
+    # 기존 이미지의 크기에서 랜덤하게 값을 가져옵니다.(중간 좌표 추출)
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    # 패치 부분에 대한 좌표값을 추출합니다.
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
 
 class BaseAugmentation:
     def __init__(self, resize, mean, std, **args):
@@ -45,6 +103,18 @@ class AutoAugmentation:
     def __call__(self, image):
         return self.transform(image)
 
+class RandomAugmentation:
+    def __init__(self, resize, mean, std, **args):
+        self.transform = transforms.Compose([
+            rand_augment_transform(config_str='rand-m9-mstd0.5', hparams={'translate_const': 117, 'img_mean': (124, 116, 104)}),
+            Resize(resize, Image.BILINEAR),
+            ToTensor(),
+            Normalize(mean=mean, std=std),
+        ])
+
+    def __call__(self, image):
+        return self.transform(image)       
+
 class AddGaussianNoise(object):
     """
         transform 에 없는 기능들은 이런식으로 __init__, __call__, __repr__ 부분을
@@ -61,6 +131,19 @@ class AddGaussianNoise(object):
     def __repr__(self):
         return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
+class TestAugmentation:
+    def __init__(self, resize, mean, std, **args):
+        self.transform = transforms.Compose([
+            CenterCrop((320, 256)),
+            RandomHorizontalFlip(),
+            RandomRotation(3),
+            Resize(resize, Image.BILINEAR),
+            ToTensor(),
+            Normalize(mean=mean, std=std),
+        ])
+
+    def __call__(self, image):
+        return self.transform(image)
 
 class CustomAugmentation:
     def __init__(self, resize, mean, std, **args):
@@ -144,7 +227,7 @@ class MaskBaseDataset(Dataset):
 
         self.transform = None
         self.setup()
-        self.calc_statistics()
+        #self.calc_statistics()
 
     def setup(self):
         profiles = os.listdir(self.data_dir)
@@ -170,19 +253,19 @@ class MaskBaseDataset(Dataset):
                 self.gender_labels.append(gender_label)
                 self.age_labels.append(age_label)
 
-    def calc_statistics(self):
-        has_statistics = self.mean is not None and self.std is not None
-        if not has_statistics:
-            print("[Warning] Calculating statistics... It can take a long time depending on your CPU machine")
-            sums = []
-            squared = []
-            for image_path in self.image_paths[:3000]:
-                image = np.array(Image.open(image_path)).astype(np.int32)
-                sums.append(image.mean(axis=(0, 1)))
-                squared.append((image ** 2).mean(axis=(0, 1)))
+    # def calc_statistics(self):
+    #     has_statistics = self.mean is not None and self.std is not None
+    #     if not has_statistics:
+    #         print("[Warning] Calculating statistics... It can take a long time depending on your CPU machine")
+    #         sums = []
+    #         squared = []
+    #         for image_path in self.image_paths[:3000]:
+    #             image = np.array(Image.open(image_path)).astype(np.int32)
+    #             sums.append(image.mean(axis=(0, 1)))
+    #             squared.append((image ** 2).mean(axis=(0, 1)))
 
-            self.mean = np.mean(sums, axis=0) / 255
-            self.std = (np.mean(squared, axis=0) - self.mean ** 2) ** 0.5 / 255
+    #         self.mean = np.mean(sums, axis=0) / 255
+    #         self.std = (np.mean(squared, axis=0) - self.mean ** 2) ** 0.5 / 255
 
     def set_transform(self, transform):
         self.transform = transform
@@ -236,12 +319,6 @@ class MaskBaseDataset(Dataset):
         return img_cp
 
     def split_dataset(self) -> Tuple[Subset, Subset]:
-        """
-        데이터셋을 train 과 val 로 나눕니다,
-        pytorch 내부의 torch.utils.data.random_split 함수를 사용하여
-        torch.utils.data.Subset 클래스 둘로 나눕니다.
-        구현이 어렵지 않으니 구글링 혹은 IDE (e.g. pycharm) 의 navigation 기능을 통해 코드를 한 번 읽어보는 것을 추천드립니다^^
-        """
         n_val = int(len(self) * self.val_ratio)
         n_train = len(self) - n_val
         train_set, val_set = random_split(self, [n_train, n_val])
@@ -249,33 +326,34 @@ class MaskBaseDataset(Dataset):
 
 
 class MaskSplitByProfileDataset(MaskBaseDataset):
-    """
-        train / val 나누는 기준을 이미지에 대해서 random 이 아닌
-        사람(profile)을 기준으로 나눕니다.
-        구현은 val_ratio 에 맞게 train / val 나누는 것을 이미지 전체가 아닌 사람(profile)에 대해서 진행하여 indexing 을 합니다
-        이후 `split_dataset` 에서 index 에 맞게 Subset 으로 dataset 을 분기합니다.
-    """
-
-    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2):
+    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
         self.indices = defaultdict(list)
+        self.k = k
+        self.kfold = kfold
         super().__init__(data_dir, mean, std, val_ratio)
 
     @staticmethod
-    def _split_profile(profiles, val_ratio):
-        length = len(profiles)
-        n_val = int(length * val_ratio)
+    def _split_profile(kfold, k, profiles, val_ratio):
+        ids = []
+        gender_and_age = []
 
-        val_indices = set(random.choices(range(length), k=n_val))
-        train_indices = set(range(length)) - val_indices
-        return {
-            "train": train_indices,
-            "val": val_indices
-        }
+        for profile in profiles:
+            id, gender, race, age = profile.split("_")
+            gender_label = GenderLabels.from_str(gender)
+            age_label = AgeLabels.from_number(age)
+            ids.append(id)
+            gender_and_age.append(str(gender_label) + str(age_label))
+        ids = np.array(ids)
+        skf = StratifiedKFold(n_splits=kfold, shuffle=True, random_state=42)
+        kfold_array = []
+        for train_index, valid_index in skf.split(ids, gender_and_age):
+            kfold_array.append({'train' : train_index, 'valid' : valid_index})
+        return kfold_array[k]
 
     def setup(self):
         profiles = os.listdir(self.data_dir)
         profiles = [profile for profile in profiles if not profile.startswith(".")]
-        split_profiles = self._split_profile(profiles, self.val_ratio)
+        split_profiles = self._split_profile(self.kfold, self.k, profiles, self.val_ratio)
 
         cnt = 0
         for phase, indices in split_profiles.items():
@@ -304,6 +382,26 @@ class MaskSplitByProfileDataset(MaskBaseDataset):
 
     def split_dataset(self) -> List[Subset]:
         return [Subset(self, indices) for phase, indices in self.indices.items()]
+
+
+class MultiLabelDataset(MaskSplitByProfileDataset):
+    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
+        self.indices = defaultdict(list)
+        super().__init__(data_dir, mean, std, val_ratio, kfold, k)
+
+    def __getitem__(self, index):
+        assert self.transform is not None, ".set_tranform 메소드를 이용하여 transform 을 주입해주세요"
+
+        image = self.read_image(index)
+        mask_label = self.get_mask_label(index)
+        gender_label = self.get_gender_label(index)
+        age_label = self.get_age_label(index)
+        multi_class_label = self.encode_multi_class(mask_label, gender_label, age_label)
+        multi_label = {'mask': mask_label, 'age': age_label, 'gender': gender_label, 'label': multi_class_label}
+
+        image_transform = self.transform(image)
+
+        return image_transform, multi_label
 
 
 class TestDataset(Dataset):
