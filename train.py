@@ -306,12 +306,12 @@ def train(k, data_dir, model_dir, args):
                 pred_tensor.append(preds.cpu())
                 # target_tensor.append(labels.cpu())
 
-                if figure is None:
-                    inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
-                    inputs_np = dataset_module.denormalize_image(inputs_np, dataset.mean, dataset.std)
-                    figure = grid_image(
-                        inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
-                    )
+                # if figure is None:
+                #     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
+                #     inputs_np = dataset_module.denormalize_image(inputs_np, dataset.mean, dataset.std)
+                    # figure = grid_image(
+                    #     inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
+                    # )
 
             val_f1 = f1_score(torch.cat(target_tensor), torch.cat(pred_tensor), average='macro')
             val_loss = np.sum(val_loss_items) / len(val_loader)
@@ -332,7 +332,7 @@ def train(k, data_dir, model_dir, args):
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/F1", val_f1, epoch)
-            logger.add_figure("results", figure, epoch)
+            # logger.add_figure("results", figure, epoch)
             print()
 
 
@@ -371,7 +371,7 @@ if __name__ == '__main__':
     parser.add_argument('--mixp', type=float, default=0., help='cutmix probability (default : 0.5)')
     parser.add_argument('--kfold', type=int, default=5, help='set kfold num (default:5)')
     parser.add_argument('--k', type=int, default=0, help='set kfold num (default:0)')
-    parser.add_argument('--images', type=str, default='aging_cyclegan', help='images or fdimages')
+    parser.add_argument('--images', type=str, default='train/aging_cyclegan1', help='images or fdimages')
     parser.add_argument('--data_selection', type=str, default='1_0_0', help="How to use a data; 'real images'_'threshold of old fake images'_'threshold of young fake images'")
     parser.add_argument('--wrong_image', type=lambda x: bool(util.strtobool(x)), default=False)
 
