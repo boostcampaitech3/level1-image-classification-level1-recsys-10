@@ -119,8 +119,9 @@ def train(k, data_dir, model_dir, args):
         std=dataset.std,
     )
     dataset.set_transform(transform)
-    
+
     # -- data_loader
+    print(dataset.split_dataset())
     train_set, val_set = dataset.split_dataset()
 
     train_loader = DataLoader(

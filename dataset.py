@@ -227,8 +227,6 @@ class MaskBaseDataset(Dataset):
         self.val_ratio = val_ratio
 
         self.transform = None
-        if self.__class__.__name__ == 'FakeDataset':
-            return
         self.setup()
         #self.calc_statistics()
 
@@ -386,28 +384,7 @@ class MaskSplitByProfileDataset(MaskBaseDataset):
     def split_dataset(self) -> List[Subset]:
         return [Subset(self, indices) for phase, indices in self.indices.items()]
 
-
-class MultiLabelDataset(MaskSplitByProfileDataset):
-    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
-        self.indices = defaultdict(list)
-        super().__init__(data_dir, mean, std, val_ratio, kfold, k)
-
-    def __getitem__(self, index):
-        assert self.transform is not None, ".set_tranform 메소드를 이용하여 transform 을 주입해주세요"
-
-        image = self.read_image(index)
-        mask_label = self.get_mask_label(index)
-        gender_label = self.get_gender_label(index)
-        age_label = self.get_age_label(index)
-        multi_class_label = self.encode_multi_class(mask_label, gender_label, age_label)
-        multi_label = {'mask': mask_label, 'age': age_label, 'gender': gender_label, 'label': multi_class_label}
-
-        image_transform = self.transform(image)
-
-        return image_transform, multi_label
-
-class FakeDataset(MaskSplitByProfileDataset):
-    
+class AgeDataset(MaskSplitByProfileDataset) :
     _file_names = {
         "mask1_fake_A": MaskLabels.MASK,
         "mask2_fake_A": MaskLabels.MASK,
@@ -432,71 +409,94 @@ class FakeDataset(MaskSplitByProfileDataset):
         "normal_fake_B": MaskLabels.NORMAL
     }
 
-    def __init__(self, data_dir, age_parameter, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
+    def __init__(self, data_dir, age_arguments, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
         self.indices = defaultdict(list)
+        self.age_parameter = age_arguments
         super().__init__(data_dir, mean, std, val_ratio, kfold, k)
-        self.age_parameter = tuple(age_parameter.split('_'))
-        self.setup(self, self.age_parameter)
 
-        
-    
-    @staticmethod
-    def setup(self, age_parameter):
-
-        use_real, older, younger = int(age_parameter[0]), int(age_parameter[2]), int(age_parameter[2])
-
+    def setup(self):
+        use_real, older, younger = int(self.age_parameter[0]), int(self.age_parameter[1]), int(self.age_parameter[2])
         profiles = os.listdir(self.data_dir)
+        split_profiles = self._split_profile(self.kfold, self.k, profiles, self.val_ratio)
 
-        for profile in profiles:
-            if profile.startswith("."):  # "." 로 시작하는 파일은 무시합니다
-                continue
-
-            img_folder = os.path.join(self.data_dir, profile,"images")
-            for file_name in os.listdir(img_folder):
-                _file_name, ext = os.path.splitext(file_name)
-                
-                print(img_folder + '/' + _file_name)
-                id, gender, race, age, _= profile.split("_")
-                
-
-                if _file_name not in self._file_names:
-                    continue
-
-                if "fake_A" in _file_name and older==0:
-                    print(1)
-                    continue
-                if "fake_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
-                    print(2)
-                    continue
-                if "fake_B" in _file_name and younger==0:
-                    print(3)
-                    continue
-                if "fake_B" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
-                    print(4)
-                    continue
-                if use_real==0:
-                    if "real_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
-                        print(5)
-                    if "real_A" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
-                        print(6)
+        for phase, indices in split_profiles.items():
+            for _idx in indices:
+                profile = profiles[_idx]
+                img_folder = os.path.join(self.data_dir, profile)
+                for file_name in os.listdir(img_folder):
+                    _file_name, ext = os.path.splitext(file_name)
+                    if _file_name not in self._file_names:  # "." 로 시작하는 파일 및 invalid 한 파일들은 무시합니다
                         continue
 
-                img_path = os.path.join(self.data_dir, profile,"images", file_name)  # (resized_data, 000004_male_Asian_54, mask1.jpg)
-                img_path = os.path.join(self.data_dir, profile,"images", file_name)  # (resized_data, 000004_male_Asian_54, mask1.jpg)
-                mask_label = self._file_names[_file_name]
+                    img_folder = os.path.join(self.data_dir, profile,"images")
+                    for file_name in os.listdir(img_folder):
+                        _file_name, ext = os.path.splitext(file_name)
+                        
+                        print(img_folder + '/' + _file_name)
+                        id, gender, race, age, _= profile.split("_")
+                        
+                        if _file_name not in self._file_names:
+                            continue
+                        if "fake_A" in _file_name and older==0:
+                            print(1)
+                            continue
+                        elif "fake_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
+                            print(2)
+                            continue
+                        elif "fake_B" in _file_name and younger==0:
+                            print(3)
+                            continue
+                        elif "fake_B" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
+                            print(4)
+                            continue
 
-                if "fake_A" in _file_name:
-                    age=str(int(age)+10)
-                if "fake_B" in _file_name:
-                    age=str(int(age)-10)
-                gender_label = GenderLabels.from_str(gender)
-                age_label = AgeLabels.from_number(age)
-                self.image_paths.append(img_path)
-                #img_path
-                self.mask_labels.append(mask_label)
-                self.gender_labels.append(gender_label)
-                self.age_labels.append(age_label)
-    
+                        if use_real==0:
+                            if "real_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
+                                print(5)
+                            if "real_A" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
+                                print(6)
+                                continue
+
+                        img_path = os.path.join(self.data_dir, profile,"images", file_name)  # (resized_data, 000004_male_Asian_54, mask1.jpg)
+                        img_path = os.path.join(self.data_dir, profile,"images", file_name)  # (resized_data, 000004_male_Asian_54, mask1.jpg)
+                        mask_label = self._file_names[_file_name]
+
+                        if "fake_A" in _file_name:
+                            age=str(int(age)+10)
+                        if "fake_B" in _file_name:
+                            age=str(int(age)-10)
+                                                        
+                        gender_label = GenderLabels.from_str(gender)
+                        age_label = AgeLabels.from_number(age)
+                        self.image_paths.append(img_path)
+                        #img_path
+                        self.mask_labels.append(mask_label)
+                        self.gender_labels.append(gender_label)
+                        self.age_labels.append(age_label)
+
+
+class MultiLabelDataset(MaskSplitByProfileDataset):
+    def __init__(self, data_dir, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), val_ratio=0.2, kfold=5, k=0):
+        self.indices = defaultdict(list)
+        super().__init__(data_dir, mean, std, val_ratio, kfold, k)
+
+    def __getitem__(self, index):
+        assert self.transform is not None, ".set_tranform 메소드를 이용하여 transform 을 주입해주세요"
+
+        image = self.read_image(index)
+        mask_label = self.get_mask_label(index)
+        gender_label = self.get_gender_label(index)
+        age_label = self.get_age_label(index)
+        multi_class_label = self.encode_multi_class(mask_label, gender_label, age_label)
+        multi_label = {'mask': mask_label, 'age': age_label, 'gender': gender_label, 'label': multi_class_label}
+
+        image_transform = self.transform(image)
+
+        return image_transform, multi_label
+
+
+
+            
 
 class TestDataset(Dataset):
     def __init__(self, img_paths, resize, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), **kwargs):
@@ -516,3 +516,7 @@ class TestDataset(Dataset):
 
     def __len__(self):
         return len(self.img_paths)
+
+
+
+
