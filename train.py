@@ -159,6 +159,7 @@ def train(k, data_dir, model_dir, args):
     def multi_criterion(loss_func, outputs, pictures):
         # multi label classification model
         losses = 0
+        # print(pictures)
         losses += 0.4 * loss_func(outputs['age'], pictures['age'].to(device))
         losses += 0.3 * loss_func(outputs['gender'], pictures['gender'].to(device))
         losses += 0.3 * loss_func(outputs['mask'], pictures['mask'].to(device))
@@ -201,7 +202,7 @@ def train(k, data_dir, model_dir, args):
         for idx, train_batch in enumerate(train_loader):
             inputs, labels = train_batch
             preds = {}
-            if not args.criterion == 'multi':
+            if not args.criterion == 'multi_label':
                 # task별로 모델 따로 사용할 때 label
                 if args.multi_label == 'mask':
                     labels = labels['mask']
@@ -226,10 +227,10 @@ def train(k, data_dir, model_dir, args):
             else:
                 inputs = inputs.to(device)
                 outs = model(inputs)
-                if not args.criterion == 'multi':
+                if not args.criterion == 'multi_label':
                     labels = labels.to(device)
             
-            if args.criterion =='multi':
+            if args.criterion =='multi_label':
                 # multi label classification 사용 시 task별로 따로 분류
                 for task in tasks:
                     preds[task] = torch.argmax(outs[task], dim=-1)
@@ -243,7 +244,7 @@ def train(k, data_dir, model_dir, args):
             optimizer.step()
 
             loss_value += loss.item()
-            if args.criterion =='multi':
+            if args.criterion =='multi_label':
                 matches += (preds.cpu() == labels['label'].cpu()).sum().item()
 
             if (idx + 1) % args.log_interval == 0:
@@ -274,7 +275,7 @@ def train(k, data_dir, model_dir, args):
             for val_batch in val_loader:
                 inputs, labels = val_batch
                 preds = {}
-                if not args.criterion == 'multi':
+                if not args.criterion == 'multi_label':
                     # task별로 모델 따로 사용할 때 label
                     if args.multi_label == 'mask':
                         labels = labels['mask']
@@ -287,7 +288,7 @@ def train(k, data_dir, model_dir, args):
 
                 outs = model(inputs)
 
-                if args.criterion =='multi':
+                if args.criterion =='multi_label':
                     for task in tasks:
                         preds[task] = torch.argmax(outs[task], dim=-1)
                     loss = multi_criterion(loss_func, outs, labels)
@@ -295,7 +296,7 @@ def train(k, data_dir, model_dir, args):
                     acc_item = (labels['label'].cpu() == preds.cpu()).sum().item()
                     loss_item = loss.item()
                     target_tensor.append(labels['label'].cpu())
-                    losses.append(loss.item())
+                    # losses.append(loss.item())
                 else:
                     loss = criterion(outs, labels)
                     preds = torch.argmax(outs, dim=-1)
@@ -371,12 +372,12 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='exp', help='model save at {SM_MODEL_DIR}/{name}')
     parser.add_argument('--pretrained', type=lambda x: bool(util.strtobool(x)), default=True, help='use torchvision pretrained model')
     parser.add_argument('--feature_extract', type=lambda x: bool(util.strtobool(x)), default=False, help='freeze parameters of pretrained model except fc layer')
-    parser.add_argument('--multi_label', type=str, default=None, help='multi label (default: mask)')
+    parser.add_argument('--multi_label', type=str, default="multi_label", help='multi label (default: mask)')
     parser.add_argument('--data_mix', type=str, default="mixup", help='mixup or cutmix batch (default : mixup)')
     parser.add_argument('--mixp', type=float, default=0., help='cutmix probability (default : 0.5)')
     parser.add_argument('--kfold', type=int, default=5, help='set kfold num (default:5)')
     parser.add_argument('--k', type=int, default=0, help='set kfold num (default:0)')
-    parser.add_argument('--images', type=str, default='train/aging_cyclegan1', help='images or fdimages')
+    parser.add_argument('--images', type=str, default='train/images', help='images or fdimages')
     parser.add_argument('--data_selection', type=str, default='1_0_0', help="How to use a data; 'real images'_'threshold of old fake images'_'threshold of young fake images'")
     parser.add_argument('--wrong_image', type=lambda x: bool(util.strtobool(x)), default=False)
 
