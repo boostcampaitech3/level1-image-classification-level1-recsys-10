@@ -255,19 +255,6 @@ class MaskBaseDataset(Dataset):
                 self.gender_labels.append(gender_label)
                 self.age_labels.append(age_label)
 
-    # def calc_statistics(self):
-    #     has_statistics = self.mean is not None and self.std is not None
-    #     if not has_statistics:
-    #         print("[Warning] Calculating statistics... It can take a long time depending on your CPU machine")
-    #         sums = []
-    #         squared = []
-    #         for image_path in self.image_paths[:3000]:
-    #             image = np.array(Image.open(image_path)).astype(np.int32)
-    #             sums.append(image.mean(axis=(0, 1)))
-    #             squared.append((image ** 2).mean(axis=(0, 1)))
-
-    #         self.mean = np.mean(sums, axis=0) / 255
-    #         self.std = (np.mean(squared, axis=0) - self.mean ** 2) ** 0.5 / 255
 
     def set_transform(self, transform):
         self.transform = transform
@@ -332,6 +319,7 @@ class MaskSplitByProfileDataset(MaskBaseDataset):
         self.indices = defaultdict(list)
         self.k = k
         self.kfold = kfold
+        val_ratio = 0.01
         super().__init__(data_dir, mean, std, val_ratio)
 
     @staticmethod
@@ -420,8 +408,8 @@ class AgeDataset(MultiLabelDataset) :
         "mask3_real_A": MaskLabels.MASK,
         "mask4_real_A": MaskLabels.MASK,
         "mask5_real_A": MaskLabels.MASK,
-        "incorrect_mask_fake_A": MaskLabels.INCORRECT,
-        "normal_fake_A": MaskLabels.NORMAL,
+        "incorrect_mask_real_A": MaskLabels.INCORRECT,
+        "normal_real_A": MaskLabels.NORMAL,
         "mask1_fake_B": MaskLabels.MASK,
         "mask2_fake_B": MaskLabels.MASK,
         "mask3_fake_B": MaskLabels.MASK,
@@ -445,39 +433,38 @@ class AgeDataset(MultiLabelDataset) :
         profiles = [profile for profile in profiles if not profile.startswith(".")]
         split_profiles = self._split_profile(self.kfold, self.k, profiles, self.val_ratio)
 
-        cnt = 0
+        cnt=0
+        cnt2=0
+        cnt3=0
+        cnt4=0
+        cnt5=0
+        cnt6=0
         for phase, indices in split_profiles.items():
             for _idx in indices:
                 profile = profiles[_idx]
-                img_folder = os.path.join(self.data_dir, profile,"images")
-
+                img_folder = os.path.join(self.data_dir, profile, "images")
                 for file_name in os.listdir(img_folder):
+                    cnt7=0
+                    cnt2=cnt2+1
                     _file_name, ext = os.path.splitext(file_name)
-                    
-                    id, gender, race, age, _= profile.split("_")
-                    
+                    id, gender, race, age,_ = profile.split("_")
+                    Rage=int(age)
                     if _file_name not in self._file_names:
                         continue
-
                     if "fake_A" in _file_name and older==0:
-                        #print(1)
                         continue
-                    elif "fake_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
-                        #print(2)
+                    elif "fake_A" in _file_name and ((Rage<60-older and Rage>=30)or(Rage<30-older) or int(age)==60):
                         continue
                     elif "fake_B" in _file_name and younger==0:
-                        #print(3)
                         continue
-                    elif "fake_B" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
-                        #print(4)
+                    elif "fake_B" in _file_name and ((Rage<60 and Rage>=30+younger)or(Rage<30)):
                         continue
-
                     if use_real==0:
-                        if "real_A" in _file_name and ((int(age)<60-older and int(age)>=30)or(int(age)<30-older)) and older>0:
-                        #    print(5)
+                        if "real_A" in _file_name and ((Rage>=60-older and Rage<60)or(Rage>=30-older and Rage<30)) and older>0:
+                            cnt3=cnt3+1
                             continue
-                        if "real_A" in _file_name and ((int(age)<60 and int(age)>=30+younger)or(int(age)<30)) and younger>0:
-                        #    print(6)
+                        if "real_A" in _file_name and ((Rage>=30 and int(age)<30+younger)or(Rage==60)) and younger>0:
+                            cnt4=cnt4+1
                             continue
 
                     img_path = os.path.join(self.data_dir, profile,"images", file_name)  # (resized_data, 000004_male_Asian_54, mask1.jpg)
@@ -488,6 +475,7 @@ class AgeDataset(MultiLabelDataset) :
                         age=str(int(age)+older)
                     if "fake_B" in _file_name:
                         age=str(int(age)-younger)
+                
                                                     
                     gender_label = GenderLabels.from_str(gender)
                     age_label = AgeLabels.from_number(age)
@@ -518,12 +506,34 @@ class AgeDataset(MultiLabelDataset) :
             kfold_array.append({'train' : train_index, 'valid' : valid_index})
         return kfold_array[k]
 
-            
+class InferenceDataset(Dataset):
+    def __init__(self, img_paths, resize, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), **kwargs):
+        self.img_paths = img_paths
+        self.transform = transforms.Compose([
+            CenterCrop([360,270]),
+            Resize(resize, Image.BILINEAR),
+            ToTensor(),
+            Normalize(mean=mean, std=std),
+        ])
+
+    def __getitem__(self, index):
+        image = Image.open(self.img_paths[index])
+
+        if self.transform:
+            image = self.transform(image)
+        return image
+
+    def __len__(self):
+        return len(self.img_paths)            
+
 
 class TestDataset(Dataset):
     def __init__(self, img_paths, resize, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225), **kwargs):
         self.img_paths = img_paths
         self.transform = transforms.Compose([
+            CenterCrop((320, 256)),
+            RandomHorizontalFlip(),
+            RandomRotation(3),
             Resize(resize, Image.BILINEAR),
             ToTensor(),
             Normalize(mean=mean, std=std),
@@ -538,4 +548,7 @@ class TestDataset(Dataset):
 
     def __len__(self):
         return len(self.img_paths)
+
+
+
 
