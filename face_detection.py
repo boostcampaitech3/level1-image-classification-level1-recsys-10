@@ -75,7 +75,7 @@ def train(data_size):
                     img2 = img[y1-100:y1+220, x1-186:x1+70, :]
                     cv2.imwrite(IMAGEPATH, img2)
             
-        print(f"images len : {path_df.shape[0]} complete images : {count}")
+        print(f"images len: {path_df.shape[0]} complete images: {count}")
     except cv2.error:
         print(idx)
         print(img.shape)
@@ -147,7 +147,7 @@ def eval(data_size):
                 cv2.imwrite(IMAGEPATH, img2)
            
             
-    print(f"images len : {path_df.shape[0]} complete images : {count}")
+    print(f"images len: {path_df.shape[0]} complete images: {count}")
 
 
 
