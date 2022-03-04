@@ -18,10 +18,6 @@ def load_model(saved_model, num_classes, device):
         num_classes=num_classes
     )
 
-    # tarpath = os.path.join(saved_model, 'best.tar.gz')
-    # tar = tarfile.open(tarpath, 'r:gz')
-    # tar.extractall(path=saved_model)
-
     model_path = os.path.join(saved_model, 'best.pth')
     model.load_state_dict(torch.load(model_path, map_location=device))
 
@@ -35,7 +31,6 @@ def inference(k, data_dir, model_dir, output_dir, args):
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda" if use_cuda else "cpu")
 
-    # num_classes = MaskBaseDataset.num_classes  # 18
     model = {}
     for task in ['gender', 'mask', 'age']:
         if task == 'gender':
@@ -45,8 +40,6 @@ def inference(k, data_dir, model_dir, output_dir, args):
         
         temp_path = os.path.join(model_dir, 'k'+str(k), 'effnet_' + task)
         model[task] = load_model(temp_path, num_classes, device).to(device).eval()
-    # model = load_model(model_dir, num_classes, device).to(device)
-    # model.eval()
 
     img_root = os.path.join(data_dir, 'images')
     info_path = os.path.join(data_dir, 'info.csv')
@@ -76,9 +69,6 @@ def inference(k, data_dir, model_dir, output_dir, args):
             preds.extend(pred.cpu().numpy())
 
     return info, preds
-    # info['ans'] = preds
-    # info.to_csv(os.path.join(output_dir, f'output.csv'), index=False)
-    # print(f'Inference Done!')
 
 
 if __name__ == '__main__':
