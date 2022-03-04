@@ -157,25 +157,26 @@ def train(k, data_dir, model_dir, args):
 
     # -- loss & metric
     def multi_criterion(loss_func, outputs, pictures):
+        # multi label classification model
         losses = 0
-        # for i, key in enumerate(outputs):
         losses += 0.4 * loss_func(outputs['age'], pictures['age'].to(device))
         losses += 0.3 * loss_func(outputs['gender'], pictures['gender'].to(device))
         losses += 0.3 * loss_func(outputs['mask'], pictures['mask'].to(device))
         return losses
-    loss_func = nn.CrossEntropyLoss()
 
-    if not args.criterion == 'multi':
+    if args.criterion == 'multi_label':
+        # multi label classification
+        loss_func = create_criterion('cross_entropy')
+    else:
         criterion = create_criterion(args.criterion)  # default: cross_entropy
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  # default: SGD
     optimizer = opt_module(
-        # filter(lambda p: p.requires_grad, model.parameters()),
         model.parameters(), # 레이어 프리즈하다 프리즈 풀고 트레이닝 하기 위해 수정
         lr=args.lr,
         weight_decay=args.weight_decay
     )
     # None if LR scheduler is not in use
-    scheduler = None # StepLR(optimizer, args.lr_decay_step, gamma=0.5)
+    scheduler = None
 
     # -- logging
     logger = SummaryWriter(log_dir=save_dir)
@@ -189,6 +190,7 @@ def train(k, data_dir, model_dir, args):
     data_mix = getattr(import_module("dataset"), args.data_mix)
 
     for epoch in range(args.epochs):
+        # model parameter freeze 풀기
         if epoch == 2:
             for param in model.parameters():
                 param.requires_grad = True
@@ -200,6 +202,7 @@ def train(k, data_dir, model_dir, args):
             inputs, labels = train_batch
             preds = {}
             if not args.criterion == 'multi':
+                # task별로 모델 따로 사용할 때 label
                 if args.multi_label == 'mask':
                     labels = labels['mask']
                 elif args.multi_label == 'age':
@@ -210,6 +213,7 @@ def train(k, data_dir, model_dir, args):
             optimizer.zero_grad()
         
             if not args.mixp == 0.:
+                # mixup, cutmix
                 if np.random.random() < args.mixp:
                     inputs, lam, target_a, target_b = data_mix(inputs, labels, device)
                     outs = model(inputs)
@@ -226,6 +230,7 @@ def train(k, data_dir, model_dir, args):
                     labels = labels.to(device)
             
             if args.criterion =='multi':
+                # multi label classification 사용 시 task별로 따로 분류
                 for task in tasks:
                     preds[task] = torch.argmax(outs[task], dim=-1)
                 loss = multi_criterion(loss_func, outs, labels)
@@ -270,15 +275,15 @@ def train(k, data_dir, model_dir, args):
                 inputs, labels = val_batch
                 preds = {}
                 if not args.criterion == 'multi':
+                    # task별로 모델 따로 사용할 때 label
                     if args.multi_label == 'mask':
                         labels = labels['mask']
-                    elif args.multi_label == 'age' or args.multi_label == 'eightage':
+                    elif args.multi_label == 'age':
                         labels = labels['age']
                     elif args.multi_label == 'gender':
                         labels = labels['gender']
-                inputs = inputs.to(device)
-                if not args.criterion == 'multi':
                     labels = labels.to(device)
+                inputs = inputs.to(device)
 
                 outs = model(inputs)
 
@@ -290,7 +295,7 @@ def train(k, data_dir, model_dir, args):
                     acc_item = (labels['label'].cpu() == preds.cpu()).sum().item()
                     loss_item = loss.item()
                     target_tensor.append(labels['label'].cpu())
-                    # losses.append(loss.item())
+                    losses.append(loss.item())
                 else:
                     loss = criterion(outs, labels)
                     preds = torch.argmax(outs, dim=-1)
@@ -298,20 +303,20 @@ def train(k, data_dir, model_dir, args):
                     acc_item = (labels == preds).sum().item()
                     target_tensor.append(labels.cpu())
 
-                # loss_item = criterion(outs, labels).item()
-                # acc_item = (labels == preds).sum().item()
+                loss_item = criterion(outs, labels).item()
+                acc_item = (labels == preds).sum().item()
                 val_loss_items.append(loss_item)
                 val_acc_items.append(acc_item)
 
                 pred_tensor.append(preds.cpu())
-                # target_tensor.append(labels.cpu())
+                target_tensor.append(labels.cpu())
 
-                # if figure is None:
-                #     inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
-                #     inputs_np = dataset_module.denormalize_image(inputs_np, dataset.mean, dataset.std)
-                    # figure = grid_image(
-                    #     inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
-                    # )
+                if figure is None:
+                    inputs_np = torch.clone(inputs).detach().cpu().permute(0, 2, 3, 1).numpy()
+                    inputs_np = dataset_module.denormalize_image(inputs_np, dataset.mean, dataset.std)
+                    figure = grid_image(
+                        inputs_np, labels, preds, n=16, shuffle=args.dataset != "MaskSplitByProfileDataset"
+                    )
 
             val_f1 = f1_score(torch.cat(target_tensor), torch.cat(pred_tensor), average='macro')
             val_loss = np.sum(val_loss_items) / len(val_loader)
@@ -332,7 +337,7 @@ def train(k, data_dir, model_dir, args):
             logger.add_scalar("Val/loss", val_loss, epoch)
             logger.add_scalar("Val/accuracy", val_acc, epoch)
             logger.add_scalar("Val/F1", val_f1, epoch)
-            # logger.add_figure("results", figure, epoch)
+            logger.add_figure("results", figure, epoch)
             print()
 
 
